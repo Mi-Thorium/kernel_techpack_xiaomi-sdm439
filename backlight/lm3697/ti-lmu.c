@@ -40,6 +40,7 @@ static int ti_lmu_enable_hw(struct ti_lmu *lmu, enum ti_lmu_id id)
 	pr_err("[bkl] %s enter\n", __func__);
 
 	if (gpio_is_valid(lmu->en_gpio)) {
+		gpio_set_value(lmu->en_gpio, 1);
 		ret = devm_gpio_request_one(lmu->dev, lmu->en_gpio,
 					    GPIOF_OUT_INIT_HIGH, "lmu_hwen");
 		if (ret) {
@@ -47,6 +48,7 @@ static int ti_lmu_enable_hw(struct ti_lmu *lmu, enum ti_lmu_id id)
 				ret);
 			return ret;
 		}
+		gpio_set_value(lmu->en_gpio, 1);
 	}
 
 	/* Delay about 1ms after HW enable pin control */
