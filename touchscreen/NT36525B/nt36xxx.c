@@ -56,6 +56,14 @@ uint8_t esd_retry ;
 
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
+#ifdef NVT_RESTART_PERIOD_MS
+static bool nvt_periodic_restart_running = false;
+static struct delayed_work nvt_periodic_restart_work;
+static struct workqueue_struct *nvt_periodic_restart_workqueue;
+
+static void nvt_periodic_restart_func(struct work_struct *work);
+#endif
+
 #if NVT_TOUCH_EXT_PROC
 extern int32_t nvt_extra_proc_init(void);
 extern void nvt_extra_proc_deinit(void);
@@ -1872,6 +1880,17 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 
 	nvt_irq_enable(true);
 
+#ifdef NVT_RESTART_PERIOD_MS
+	INIT_DELAYED_WORK(&nvt_periodic_restart_work, nvt_periodic_restart_func);
+	nvt_periodic_restart_workqueue = create_workqueue("nvt_periodic_restart_workqueue");
+	if (nvt_periodic_restart_workqueue == NULL) {
+		NVT_ERR("Failed to create nvt_periodic_restart_workqueue!!!");
+	} else {
+		NVT_LOG("Success to create nvt_periodic_restart_workqueue!!!");
+	}
+	queue_delayed_work(nvt_periodic_restart_workqueue, &nvt_periodic_restart_work, msecs_to_jiffies(NVT_RESTART_PERIOD_MS));
+#endif
+
 #if IS_ENABLED(CONFIG_TOUCHSCREEN_SYSCTL_MI439)
 	xiaomi_sdm439_touchscreen_register_operations(&nt36525b_mi439_ts_ops);
 #endif
@@ -1969,6 +1988,14 @@ return:
 static int32_t nvt_ts_remove(struct spi_device *client)
 {
 	NVT_LOG("Removing driver...\n");
+
+#ifdef NVT_RESTART_PERIOD_MS
+	if (nvt_periodic_restart_workqueue) {
+		cancel_delayed_work_sync(&nvt_periodic_restart_work);
+		destroy_workqueue(nvt_periodic_restart_workqueue);
+		nvt_periodic_restart_workqueue = NULL;
+	}
+#endif
 
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
@@ -2111,6 +2138,11 @@ static int32_t nvt_ts_suspend(struct device *dev)
 		return 0;
 	}
 
+#ifdef NVT_RESTART_PERIOD_MS
+	if (!nvt_periodic_restart_running)
+		cancel_delayed_work_sync(&nvt_periodic_restart_work);
+#endif
+
 #if WAKEUP_GESTURE
 	if (nvt_gesture_flag == 1) {
 		// do nothing
@@ -2225,6 +2257,10 @@ static int32_t nvt_ts_resume(struct device *dev)
 			msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
+#ifdef NVT_RESTART_PERIOD_MS
+	queue_delayed_work(nvt_periodic_restart_workqueue, &nvt_periodic_restart_work, msecs_to_jiffies(NVT_RESTART_PERIOD_MS));
+#endif
+
 	bTouchIsAwake = 1;
 
 	mutex_unlock(&ts->lock);
@@ -2234,6 +2270,22 @@ static int32_t nvt_ts_resume(struct device *dev)
 	return 0;
 }
 
+#ifdef NVT_RESTART_PERIOD_MS
+static void nvt_periodic_restart_func(struct work_struct *work)
+{
+	if (!bTouchIsAwake) {
+		NVT_LOG("Touch is in suspend\n");
+		return;
+	}
+
+	NVT_LOG("Start\n");
+	nvt_periodic_restart_running = true;
+	nvt_ts_suspend(&ts->client->dev);
+	nvt_ts_resume(&ts->client->dev);
+	nvt_periodic_restart_running = false;
+	NVT_LOG("End\n");
+}
+#endif // NVT_RESTART_PERIOD_MS
 
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
